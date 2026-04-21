@@ -62,4 +62,13 @@ def load_dataframe(file_id: str) -> pd.DataFrame:
     # Remove "Unnamed: X" columns that sneak through
     df = df[[c for c in df.columns if not str(c).startswith("Unnamed:")]]
 
+    # Replace common placeholders for zero used in Argentine accounting sheets
+    df = df.replace({"-": 0, "—": 0, " - ": 0, "": None})
+
+    # Try to convert object columns to numeric where possible
+    for col in df.select_dtypes(include="object").columns:
+        converted = pd.to_numeric(df[col], errors="ignore")
+        if converted.dtype != object:
+            df[col] = converted
+
     return df

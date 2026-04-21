@@ -1,5 +1,4 @@
 import os
-import json
 import litellm
 import pandas as pd
 
@@ -24,55 +23,54 @@ PROVIDERS = {
     },
 }
 
-SYSTEM_PROMPT = """Sos un analista de datos experto que responde preguntas en español sobre planillas de Excel o CSV.
+CODE_PROMPT = """Sos un experto en pandas. Respondé SOLO con código Python válido, sin explicaciones, sin markdown, sin ```.
 
-Cuando el usuario haga una pregunta, respondé con un JSON válido con este formato exacto:
-{
-  "explanation": "Respuesta en lenguaje natural, como si fueras un contador o empleado que conoce los números. 1-3 oraciones, directas y útiles. Destacá los números clave.",
-  "code": "código Python que usa el DataFrame `df` (pandas importado como `pd`, matplotlib como `plt`). Asigná el resultado a `result` o generá un gráfico. Sin imports adicionales."
-}
+Tenés acceso a:
+- `df`: el DataFrame con los datos
+- `pd`: pandas
+- `plt`: matplotlib.pyplot
 
-Reglas:
-- El JSON debe ser válido, sin texto antes ni después.
-- El campo `explanation` es la respuesta humana, sin mencionar pandas ni código.
-- Si la pregunta pide un gráfico, en `explanation` describí qué muestra el gráfico.
-- Si el código falla, el sistema te va a avisar para que lo corrijas."""
+Asigná el resultado a `result`, o generá un gráfico con matplotlib (sin plt.show()).
+No hagas imports adicionales."""
+
+EXPLAIN_PROMPT = """Respondé en español, en 1 oración clara y directa, como un empleado que conoce los números.
+No menciones código ni pandas. Si hay un número, destacalo. Si hay varios, mencioná el más importante."""
 
 
 def build_schema_context(df: pd.DataFrame) -> str:
     cols = "\n".join(f"  - {col} ({df[col].dtype})" for col in df.columns)
     sample = df.head(5).to_string(index=False)
-    return f"Columnas disponibles:\n{cols}\n\nPrimeras filas de datos:\n{sample}"
+    return f"Columnas:\n{cols}\n\nDatos (primeras filas):\n{sample}"
 
 
-def _call_llm(provider: str, api_key: str, messages: list) -> str:
-    model = PROVIDERS[provider]["model"]
+def _call(provider: str, api_key: str, system: str, user: str, max_tokens: int = 1024) -> str:
     os.environ[PROVIDERS[provider]["env_key"]] = api_key
-    response = litellm.completion(model=model, messages=messages, max_tokens=1500)
-    return response.choices[0].message.content.strip()
-
-
-def _parse_response(text: str) -> dict:
-    # Strip markdown code fences if present
+    response = litellm.completion(
+        model=PROVIDERS[provider]["model"],
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        max_tokens=max_tokens,
+    )
+    text = response.choices[0].message.content.strip()
+    # Strip markdown fences if present
     if "```" in text:
-        text = text.split("```")[1] if "```json" not in text else text.split("```json")[1].split("```")[0]
-    text = text.strip()
-    return json.loads(text)
+        lines = text.split("\n")
+        text = "\n".join(l for l in lines if not l.strip().startswith("```"))
+    return text.strip()
 
 
-def ask_llm(df: pd.DataFrame, question: str, provider: str, api_key: str, error_feedback: str | None = None) -> dict:
+def generate_code(df: pd.DataFrame, question: str, provider: str, api_key: str, error_feedback: str | None = None) -> str:
     if provider not in PROVIDERS:
         raise ValueError(f"Proveedor no soportado: {provider}")
-
     schema = build_schema_context(df)
-    user_content = f"{schema}\n\nPregunta: {question}"
+    user = f"{schema}\n\nPregunta: {question}"
     if error_feedback:
-        user_content += f"\n\nEl código anterior falló con este error:\n{error_feedback}\nCorregí solo el campo `code`, manteniendo el mismo `explanation`."
+        user += f"\n\nEl código anterior falló:\n{error_feedback}\nCorregilo."
+    return _call(provider, api_key, CODE_PROMPT, user)
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
 
-    raw = _call_llm(provider, api_key, messages)
-    return _parse_response(raw)
+def explain_result(question: str, result_str: str, provider: str, api_key: str) -> str:
+    user = f'Pregunta: "{question}"\nResultado: {result_str}'
+    try:
+        return _call(provider, api_key, EXPLAIN_PROMPT, user, max_tokens=150)
+    except Exception:
+        return result_str
