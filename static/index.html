@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Excel Chat</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+  <style>
+    body { max-width: 860px; margin: 0 auto; padding: 2rem 1rem; }
+    h1 { margin-bottom: 0.25rem; }
+    .subtitle { color: var(--pico-muted-color); margin-bottom: 2rem; font-size: 0.95rem; }
+    #preview-section, #ask-section, #result-section { display: none; }
+    #preview-table { overflow-x: auto; }
+    #preview-table table { font-size: 0.85rem; }
+    #result-box { background: var(--pico-card-background-color); border: 1px solid var(--pico-card-border-color); border-radius: var(--pico-border-radius); padding: 1.5rem; margin-top: 1rem; }
+    #result-box table { font-size: 0.85rem; width: 100%; }
+    #result-box img { max-width: 100%; border-radius: var(--pico-border-radius); }
+    #result-text { white-space: pre-wrap; font-size: 1.1rem; }
+    .tag { display: inline-block; font-size: 0.75rem; background: var(--pico-primary-background); color: var(--pico-primary); border-radius: 4px; padding: 0.1rem 0.5rem; margin-right: 0.4rem; margin-bottom: 0.3rem; }
+    details summary { cursor: pointer; color: var(--pico-muted-color); font-size: 0.85rem; }
+    #error-msg { color: var(--pico-del-color); margin-top: 0.5rem; display: none; }
+    .spinner { display: inline-block; width: 1rem; height: 1rem; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 0.4rem; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <h1>Excel Chat</h1>
+  <p class="subtitle">Subí tu planilla y hacele preguntas en español.</p>
+
+  <!-- API Key -->
+  <details id="api-key-details" open>
+    <summary><strong>1. Tu API Key de Anthropic</strong></summary>
+    <br/>
+    <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off" />
+    <small>Tu key se usa solo para cada consulta y nunca se guarda en el servidor. <a href="https://console.anthropic.com/settings/keys" target="_blank">Obtené una gratis →</a></small>
+  </details>
+
+  <hr />
+
+  <!-- Upload -->
+  <details id="upload-details" open>
+    <summary><strong>2. Subí tu archivo</strong></summary>
+    <br/>
+    <input type="file" id="file-input" accept=".xlsx,.csv" />
+    <button id="upload-btn" onclick="uploadFile()">Subir archivo</button>
+    <p id="error-msg"></p>
+  </details>
+
+  <!-- Preview -->
+  <section id="preview-section">
+    <hr />
+    <h4 id="preview-title"></h4>
+    <div id="column-tags"></div>
+    <div id="preview-table"></div>
+  </section>
+
+  <!-- Ask -->
+  <section id="ask-section">
+    <hr />
+    <strong>3. Hacé tu pregunta</strong>
+    <div style="display:flex; gap:0.5rem; margin-top:0.5rem; flex-wrap:wrap;">
+      <input type="text" id="question-input" placeholder="¿Cuál fue el mes con más ventas?" style="flex:1; min-width:200px;" onkeydown="if(event.key==='Enter') askQuestion()" />
+      <button id="ask-btn" onclick="askQuestion()">Preguntar</button>
+    </div>
+    <div style="margin-top:0.5rem; display:flex; gap:0.5rem; flex-wrap:wrap;" id="example-questions"></div>
+  </section>
+
+  <!-- Result -->
+  <section id="result-section">
+    <div id="result-box">
+      <div id="result-text"></div>
+      <div id="result-table"></div>
+      <div id="result-chart"></div>
+    </div>
+  </section>
+
+<script>
+  let fileId = null;
+
+  function showError(msg) {
+    const el = document.getElementById("error-msg");
+    el.textContent = msg;
+    el.style.display = "block";
+  }
+
+  function hideError() {
+    document.getElementById("error-msg").style.display = "none";
+  }
+
+  function setLoading(btnId, loading, label) {
+    const btn = document.getElementById(btnId);
+    btn.disabled = loading;
+    btn.innerHTML = loading ? `<span class="spinner"></span>${label}` : label;
+  }
+
+  async function uploadFile() {
+    hideError();
+    const fileInput = document.getElementById("file-input");
+    const file = fileInput.files[0];
+    if (!file) return showError("Seleccioná un archivo primero.");
+
+    setLoading("upload-btn", true, "Subiendo...");
+
+    const form = new FormData();
+    form.append("file", file);
+
+    try {
+      const res = await fetch("/upload", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Error al subir el archivo.");
+
+      fileId = data.file_id;
+      renderPreview(data);
+      document.getElementById("preview-section").style.display = "block";
+      document.getElementById("ask-section").style.display = "block";
+      document.getElementById("result-section").style.display = "none";
+      document.getElementById("upload-details").open = false;
+      document.getElementById("api-key-details").open = false;
+    } catch (e) {
+      showError(e.message);
+    } finally {
+      setLoading("upload-btn", false, "Subir archivo");
+    }
+  }
+
+  function renderPreview(data) {
+    document.getElementById("preview-title").textContent =
+      `${data.filename} — ${data.rows} filas, ${data.columns.length} columnas`;
+
+    const tags = data.columns.map(c =>
+      `<span class="tag">${c.name} <em style="opacity:.6">${c.type}</em></span>`
+    ).join("");
+    document.getElementById("column-tags").innerHTML = tags;
+
+    if (!data.preview.length) return;
+    const cols = Object.keys(data.preview[0]);
+    const header = cols.map(c => `<th>${c}</th>`).join("");
+    const rows = data.preview.map(row =>
+      `<tr>${cols.map(c => `<td>${row[c] ?? ""}</td>`).join("")}</tr>`
+    ).join("");
+    document.getElementById("preview-table").innerHTML =
+      `<table><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table>`;
+
+    // Example questions based on column names
+    const examples = generateExamples(data.columns);
+    document.getElementById("example-questions").innerHTML =
+      examples.map(q => `<button class="secondary outline" style="font-size:0.8rem;padding:0.3rem 0.7rem" onclick="setQuestion('${q}')">${q}</button>`).join("");
+  }
+
+  function generateExamples(columns) {
+    const names = columns.map(c => c.name.toLowerCase());
+    const examples = [];
+    if (names.some(n => n.includes("venta") || n.includes("ingreso") || n.includes("monto")))
+      examples.push("¿Cuál fue el mes con más ventas?");
+    if (names.some(n => n.includes("producto") || n.includes("item") || n.includes("articulo")))
+      examples.push("¿Qué productos vendí más?");
+    if (names.some(n => n.includes("margen") || n.includes("ganancia") || n.includes("utilidad")))
+      examples.push("¿Qué producto dejó más margen?");
+    if (examples.length < 2)
+      examples.push("Mostrá un resumen de los datos", "¿Cuál es el total de cada columna numérica?");
+    return examples.slice(0, 3);
+  }
+
+  function setQuestion(q) {
+    document.getElementById("question-input").value = q;
+    document.getElementById("question-input").focus();
+  }
+
+  async function askQuestion() {
+    const apiKey = document.getElementById("api-key").value.trim();
+    const question = document.getElementById("question-input").value.trim();
+
+    if (!apiKey) return showError("Ingresá tu API key de Anthropic primero.");
+    if (!question) return showError("Escribí una pregunta.");
+    if (!fileId) return showError("Primero subí un archivo.");
+
+    hideError();
+    setLoading("ask-btn", true, "Consultando...");
+
+    document.getElementById("result-section").style.display = "none";
+    document.getElementById("result-text").innerHTML = "";
+    document.getElementById("result-table").innerHTML = "";
+    document.getElementById("result-chart").innerHTML = "";
+
+    try {
+      const res = await fetch("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_id: fileId, question, api_key: apiKey }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Error al consultar.");
+
+      renderResult(data);
+      document.getElementById("result-section").style.display = "block";
+    } catch (e) {
+      showError(e.message);
+    } finally {
+      setLoading("ask-btn", false, "Preguntar");
+    }
+  }
+
+  function renderResult(data) {
+    if (data.type === "chart") {
+      document.getElementById("result-chart").innerHTML =
+        `<img src="data:image/png;base64,${data.image}" alt="Gráfico" />`;
+    } else if (data.type === "table") {
+      if (!data.data.length) {
+        document.getElementById("result-text").textContent = "Sin resultados.";
+        return;
+      }
+      const cols = Object.keys(data.data[0]);
+      const header = cols.map(c => `<th>${c}</th>`).join("");
+      const rows = data.data.map(row =>
+        `<tr>${cols.map(c => `<td>${row[c] ?? ""}</td>`).join("")}</tr>`
+      ).join("");
+      document.getElementById("result-table").innerHTML =
+        `<table><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table>`;
+    } else {
+      document.getElementById("result-text").textContent = data.data;
+    }
+  }
+</script>
+</body>
+</html>
