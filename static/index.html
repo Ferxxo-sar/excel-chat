@@ -33,6 +33,7 @@
     <br/>
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
       <select id="provider-select" style="width:auto;" onchange="onProviderChange()">
+        <option value="groq">Groq (gratis)</option>
         <option value="gemini">Google Gemini</option>
         <option value="anthropic">Anthropic Claude</option>
         <option value="openai">OpenAI</option>
@@ -86,8 +87,9 @@
   let fileId = null;
 
   const PROVIDER_HINTS = {
+    groq: 'Free tier real. Conseguí tu key en <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a> — sin tarjeta',
     anthropic: 'Conseguí tu key en <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>',
-    gemini: 'Conseguí tu key en <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com</a> — tiene capa gratuita',
+    gemini: 'Conseguí tu key en <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com</a> — requiere proyecto sin billing',
     openai: 'Conseguí tu key en <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>',
   };
 
@@ -236,22 +238,25 @@
   }
 
   function renderResult(data) {
+    // Show natural language explanation first
+    if (data.explanation) {
+      document.getElementById("result-text").innerHTML =
+        `<p style="font-size:1.05rem;margin-bottom:1rem;">${data.explanation}</p>`;
+    }
+
     if (data.type === "chart") {
       document.getElementById("result-chart").innerHTML =
         `<img src="data:image/png;base64,${data.image}" alt="Gráfico" />`;
     } else if (data.type === "table") {
-      if (!data.data.length) {
-        document.getElementById("result-text").textContent = "Sin resultados.";
-        return;
-      }
+      if (!data.data.length) return;
       const cols = Object.keys(data.data[0]);
       const header = cols.map(c => `<th>${c}</th>`).join("");
       const rows = data.data.map(row =>
         `<tr>${cols.map(c => `<td>${row[c] ?? ""}</td>`).join("")}</tr>`
       ).join("");
       document.getElementById("result-table").innerHTML =
-        `<table><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table>`;
-    } else {
+        `<details open><summary style="cursor:pointer;font-size:0.85rem;color:var(--pico-muted-color)">Ver detalle</summary><table><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table></details>`;
+    } else if (!data.explanation) {
       document.getElementById("result-text").textContent = data.data;
     }
   }

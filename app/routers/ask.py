@@ -11,7 +11,7 @@ class AskRequest(BaseModel):
     file_id: str
     question: str
     api_key: str
-    provider: str = "anthropic"
+    provider: str = "groq"
 
 
 @router.get("/providers")
@@ -32,15 +32,23 @@ def ask(body: AskRequest):
         raise HTTPException(404, "Archivo no encontrado. Volvé a subirlo.")
 
     try:
-        code = ask_llm(df, body.question, body.provider, body.api_key)
+        llm_response = ask_llm(df, body.question, body.provider, body.api_key)
     except Exception as e:
         raise HTTPException(502, f"Error al contactar el LLM: {e}")
 
+    explanation = llm_response.get("explanation", "")
+    code = llm_response.get("code", "")
+
     try:
-        return run_code(code, df)
+        result = run_code(code, df)
     except Exception as first_error:
         try:
-            code = ask_llm(df, body.question, body.provider, body.api_key, error_feedback=str(first_error))
-            return run_code(code, df)
+            llm_response = ask_llm(df, body.question, body.provider, body.api_key, error_feedback=str(first_error))
+            explanation = llm_response.get("explanation", explanation)
+            code = llm_response.get("code", "")
+            result = run_code(code, df)
         except Exception as second_error:
-            raise HTTPException(422, f"No se pudo responder la pregunta: {second_error}")
+            raise HTTPException(422, f"No se pudo ejecutar el análisis: {second_error}")
+
+    result["explanation"] = explanation
+    return result

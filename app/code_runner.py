@@ -30,11 +30,21 @@ def validate_code(code: str) -> None:
             raise ValueError(f"Código no permitido: patrón '{pattern}' detectado")
 
 
+SAFE_BUILTINS = {
+    "len": len, "range": range, "enumerate": enumerate, "zip": zip,
+    "map": map, "filter": filter, "sorted": sorted, "reversed": reversed,
+    "sum": sum, "min": min, "max": max, "abs": abs, "round": round,
+    "int": int, "float": float, "str": str, "bool": bool, "list": list,
+    "dict": dict, "tuple": tuple, "set": set, "print": print,
+    "isinstance": isinstance, "type": type, "hasattr": hasattr,
+}
+
+
 def run_code(code: str, df: pd.DataFrame) -> dict:
     validate_code(code)
 
     local_scope = {"df": df, "pd": pd, "plt": plt}
-    exec(compile(code, "<generated>", "exec"), {"__builtins__": {}}, local_scope)
+    exec(compile(code, "<generated>", "exec"), {"__builtins__": SAFE_BUILTINS}, local_scope)
 
     # Check if a figure was created
     fig = plt.gcf()
