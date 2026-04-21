@@ -29,10 +29,17 @@
 
   <!-- API Key -->
   <details id="api-key-details" open>
-    <summary><strong>1. Tu API Key de Anthropic</strong></summary>
+    <summary><strong>1. Tu API Key</strong></summary>
     <br/>
-    <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off" />
-    <small>Tu key se usa solo para cada consulta y nunca se guarda en el servidor. <a href="https://console.anthropic.com/settings/keys" target="_blank">Obtené una gratis →</a></small>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+      <select id="provider-select" style="width:auto;" onchange="onProviderChange()">
+        <option value="gemini">Google Gemini</option>
+        <option value="anthropic">Anthropic Claude</option>
+        <option value="openai">OpenAI</option>
+      </select>
+      <input type="password" id="api-key" placeholder="Pegá tu API key acá" autocomplete="off" style="flex:1; min-width:200px;" />
+    </div>
+    <small id="api-key-hint" style="margin-top:0.3rem;display:block;"></small>
   </details>
 
   <hr />
@@ -63,6 +70,7 @@
       <button id="ask-btn" onclick="askQuestion()">Preguntar</button>
     </div>
     <div style="margin-top:0.5rem; display:flex; gap:0.5rem; flex-wrap:wrap;" id="example-questions"></div>
+    <p id="ask-error-msg" style="color:var(--pico-del-color);margin-top:0.5rem;display:none;"></p>
   </section>
 
   <!-- Result -->
@@ -76,6 +84,20 @@
 
 <script>
   let fileId = null;
+
+  const PROVIDER_HINTS = {
+    anthropic: 'Conseguí tu key en <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>',
+    gemini: 'Conseguí tu key en <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com</a> — tiene capa gratuita',
+    openai: 'Conseguí tu key en <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>',
+  };
+
+  function onProviderChange() {
+    const provider = document.getElementById("provider-select").value;
+    document.getElementById("api-key-hint").innerHTML = PROVIDER_HINTS[provider] || "";
+    document.getElementById("api-key").value = "";
+  }
+
+  window.addEventListener("DOMContentLoaded", () => onProviderChange());
 
   function showError(msg) {
     const el = document.getElementById("error-msg");
@@ -166,15 +188,25 @@
     document.getElementById("question-input").focus();
   }
 
+  function showAskError(msg) {
+    const el = document.getElementById("ask-error-msg");
+    el.textContent = msg;
+    el.style.display = "block";
+  }
+
+  function hideAskError() {
+    document.getElementById("ask-error-msg").style.display = "none";
+  }
+
   async function askQuestion() {
     const apiKey = document.getElementById("api-key").value.trim();
     const question = document.getElementById("question-input").value.trim();
 
-    if (!apiKey) return showError("Ingresá tu API key de Anthropic primero.");
-    if (!question) return showError("Escribí una pregunta.");
-    if (!fileId) return showError("Primero subí un archivo.");
+    if (!apiKey) { showAskError("Ingresá tu API key primero."); return; }
+    if (!question) { showAskError("Escribí una pregunta."); return; }
+    if (!fileId) { showAskError("Primero subí un archivo."); return; }
 
-    hideError();
+    hideAskError();
     setLoading("ask-btn", true, "Consultando...");
 
     document.getElementById("result-section").style.display = "none";
@@ -183,18 +215,21 @@
     document.getElementById("result-chart").innerHTML = "";
 
     try {
+      const provider = document.getElementById("provider-select").value;
       const res = await fetch("/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file_id: fileId, question, api_key: apiKey }),
+        body: JSON.stringify({ file_id: fileId, question, api_key: apiKey, provider }),
       });
       const data = await res.json();
+      console.log("Respuesta /ask:", data);
       if (!res.ok) throw new Error(data.detail || "Error al consultar.");
 
       renderResult(data);
       document.getElementById("result-section").style.display = "block";
     } catch (e) {
-      showError(e.message);
+      console.error("Error en /ask:", e);
+      showAskError(e.message);
     } finally {
       setLoading("ask-btn", false, "Preguntar");
     }
